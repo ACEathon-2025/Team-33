@@ -39,6 +39,11 @@ export default function AdminPanel() {
   const [parentName, setParentName] = useState("");
   const [parentNumber, setParentNumber] = useState("");
 
+  // MANUAL ATTENDANCE STATES
+  const [attendanceRecord, setAttendanceRecord] = useState({});
+  const [presentList, setPresentList] = useState([]);
+  const [absentList, setAbsentList] = useState([]);
+
   // EFFECT: LOAD INITIAL DATA
   useEffect(() => {
     if (token) {
@@ -157,7 +162,9 @@ export default function AdminPanel() {
   // -------- QR DOWNLOAD --------
   const handleDownloadQR = (rollNo) => {
     const canvas = document.getElementById(`qr-${rollNo}`);
-    const pngUrl = canvas.toDataURL("image/png").replace("image/png", "image/octet-stream");
+    const pngUrl = canvas
+      .toDataURL("image/png")
+      .replace("image/png", "image/octet-stream");
     const link = document.createElement("a");
     link.href = pngUrl;
     link.download = `${rollNo}_QR.png`;
@@ -168,8 +175,11 @@ export default function AdminPanel() {
 
   // -------- EXPORT FUNCTIONS --------
   const exportCSV = (data, filename) => {
+    if (!data || data.length === 0) return alert("No data to export!");
     const headers = Object.keys(data[0]);
-    const rows = data.map((obj) => headers.map((header) => `"${obj[header] ?? ""}"`).join(","));
+    const rows = data.map((obj) =>
+      headers.map((header) => `"${obj[header] ?? ""}"`).join(",")
+    );
     const csv = [headers.join(","), ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const link = document.createElement("a");
@@ -196,38 +206,44 @@ export default function AdminPanel() {
     doc.save("attendance_report.pdf");
   };
 
-  // -------- UI --------
-  if (!token && page === "login") {
-    return (
-      <div className="centered">
-        <h2>Admin Login</h2>
-        <input placeholder="Email" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} />
-        <input placeholder="Password" type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} />
-        <button onClick={handleLogin}>Login</button>
-        <p>
-          No account? <button onClick={() => setPage("register")}>Register</button>
-        </p>
-      </div>
-    );
-  }
+  // -------- MANUAL ATTENDANCE --------
+  const handleToggleAttendance = (rollNo, name) => {
+    setAttendanceRecord((prev) => {
+      const newStatus = prev[rollNo] === "Present" ? "Absent" : "Present";
+      const updated = { ...prev, [rollNo]: newStatus };
 
-  if (!token && page === "register") {
-    return (
-      <div className="centered">
-        <h2>Register Admin</h2>
-        <input placeholder="Full Name" value={regName} onChange={(e) => setRegName(e.target.value)} />
-        <input placeholder="Institution Email" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} />
-        <input placeholder="Password" type="password" value={regPassword} onChange={(e) => setRegPassword(e.target.value)} />
-        <input placeholder="Institution Domain" value={regDomain} onChange={(e) => setRegDomain(e.target.value)} />
-        <button onClick={handleRegister}>Register</button>
-        <p>
-          Already registered? <button onClick={() => setPage("login")}>Login</button>
-        </p>
-      </div>
-    );
-  }
+      const allPresent = Object.entries(updated)
+        .filter(([_, status]) => status === "Present")
+        .map(([r]) => r);
+      const allAbsent = Object.entries(updated)
+        .filter(([_, status]) => status === "Absent")
+        .map(([r]) => r);
 
-  // -------- PAGES --------
+      setPresentList(students.filter((s) => allPresent.includes(s.rollNo)));
+      setAbsentList(students.filter((s) => allAbsent.includes(s.rollNo)));
+
+      return updated;
+    });
+  };
+
+  const handleSubmitAttendance = async () => {
+    try {
+      const records = Object.entries(attendanceRecord).map(([rollNo, status]) => ({
+        rollNo,
+        status,
+      }));
+      await axios.post(`${API_BASE}/attendance/mark`, { records });
+      alert("✅ Attendance submitted successfully!");
+      fetchAttendance();
+      setAttendanceRecord({});
+      setPresentList([]);
+      setAbsentList([]);
+    } catch (err) {
+      alert(err.response?.data?.message || "Error submitting attendance");
+    }
+  };
+
+  // -------- RENDER FUNCTIONS --------
   const renderDashboard = () => (
     <div>
       <h3>📊 Dashboard</h3>
@@ -249,16 +265,47 @@ export default function AdminPanel() {
     <div>
       <h3>👩‍🏫 Manage Teachers</h3>
       <div className="form-row">
-        <input placeholder="Name" value={teacherName} onChange={(e) => setTeacherName(e.target.value)} />
-        <input placeholder="Email" value={teacherEmail} onChange={(e) => setTeacherEmail(e.target.value)} />
-        <input placeholder="Password" type="password" value={teacherPassword} onChange={(e) => setTeacherPassword(e.target.value)} />
-        <input placeholder="Class Assigned" value={teacherClass} onChange={(e) => setTeacherClass(e.target.value)} />
+        <input
+          placeholder="Name"
+          value={teacherName}
+          onChange={(e) => setTeacherName(e.target.value)}
+        />
+        <input
+          placeholder="Email"
+          value={teacherEmail}
+          onChange={(e) => setTeacherEmail(e.target.value)}
+        />
+        <input
+          placeholder="Password"
+          type="password"
+          value={teacherPassword}
+          onChange={(e) => setTeacherPassword(e.target.value)}
+        />
+        <input
+          placeholder="Class Assigned"
+          value={teacherClass}
+          onChange={(e) => setTeacherClass(e.target.value)}
+        />
         <button onClick={handleAddTeacher}>Add Teacher</button>
       </div>
       <button onClick={() => exportCSV(teachers, "teachers")}>⬇ Export CSV</button>
       <table>
-        <thead><tr><th>Name</th><th>Email</th><th>Class</th></tr></thead>
-        <tbody>{teachers.map((t) => (<tr key={t._id}><td>{t.name}</td><td>{t.email}</td><td>{t.classAssigned}</td></tr>))}</tbody>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Class</th>
+          </tr>
+        </thead>
+        <tbody>
+          {teachers.map((t) => (
+            <tr key={t._id}>
+              <td>{t.name}</td>
+              <td>{t.email}</td>
+              <td>{t.classAssigned}</td>
+            </tr>
+          ))}
+        </tbody>
       </table>
     </div>
   );
@@ -267,22 +314,72 @@ export default function AdminPanel() {
     <div>
       <h3>🎓 Manage Students</h3>
       <div className="form-row">
-        <input placeholder="Full Name" value={studentFullName} onChange={(e) => setStudentFullName(e.target.value)} />
-        <input placeholder="Roll No" value={studentRollNo} onChange={(e) => setStudentRollNo(e.target.value)} />
-        <input placeholder="Class" value={studentClass} onChange={(e) => setStudentClass(e.target.value)} />
-        <input placeholder="Section" value={studentSection} onChange={(e) => setStudentSection(e.target.value)} />
-        <input placeholder="Parent Name" value={parentName} onChange={(e) => setParentName(e.target.value)} />
-        <input placeholder="Parent Number" value={parentNumber} onChange={(e) => setParentNumber(e.target.value)} />
+        <input
+          placeholder="Full Name"
+          value={studentFullName}
+          onChange={(e) => setStudentFullName(e.target.value)}
+        />
+        <input
+          placeholder="Roll No"
+          value={studentRollNo}
+          onChange={(e) => setStudentRollNo(e.target.value)}
+        />
+        <input
+          placeholder="Class"
+          value={studentClass}
+          onChange={(e) => setStudentClass(e.target.value)}
+        />
+        <input
+          placeholder="Section"
+          value={studentSection}
+          onChange={(e) => setStudentSection(e.target.value)}
+        />
+        <input
+          placeholder="Parent Name"
+          value={parentName}
+          onChange={(e) => setParentName(e.target.value)}
+        />
+        <input
+          placeholder="Parent Number"
+          value={parentNumber}
+          onChange={(e) => setParentNumber(e.target.value)}
+        />
         <button onClick={handleAddStudent}>Add Student</button>
       </div>
       <button onClick={() => exportCSV(students, "students")}>⬇ Export CSV</button>
       <table>
-        <thead><tr><th>QR</th><th>Roll</th><th>Name</th><th>Class</th><th>Section</th><th>Parent</th><th>Contact</th><th>Action</th></tr></thead>
-        <tbody>{students.map((s) => (<tr key={s._id}>
-        <td><QRCodeCanvas id={`qr-${s.rollNo}`} value={s.rollNo} size={50} /></td>
-          <td>{s.rollNo}</td><td>{s.fullName}</td><td>{s.className}</td><td>{s.section}</td>
-          <td>{s.parentName}</td><td>{s.parentNumber}</td>
-          <td><button onClick={() => handleDownloadQR(s.rollNo)}>Download QR</button></td></tr>))}</tbody>
+        <thead>
+          <tr>
+            <th>QR</th>
+            <th>Roll</th>
+            <th>Name</th>
+            <th>Class</th>
+            <th>Section</th>
+            <th>Parent</th>
+            <th>Contact</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {students.map((s) => (
+            <tr key={s._id}>
+              <td>
+                <QRCodeCanvas id={`qr-${s.rollNo}`} value={s.rollNo} size={50} />
+              </td>
+              <td>{s.rollNo}</td>
+              <td>{s.fullName}</td>
+              <td>{s.className}</td>
+              <td>{s.section}</td>
+              <td>{s.parentName}</td>
+              <td>{s.parentNumber}</td>
+              <td>
+                <button onClick={() => handleDownloadQR(s.rollNo)}>
+                  Download QR
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
       </table>
     </div>
   );
@@ -290,58 +387,209 @@ export default function AdminPanel() {
   const renderAttendance = () => (
     <div>
       <h3>🕒 Attendance Records</h3>
-      <div style={{ marginBottom: "10px" }}>
-        <button onClick={() => exportCSV(attendance, "attendance_report")}>⬇ Export CSV</button>
-        <button onClick={exportAttendancePDF}>📄 Export PDF</button>
+
+      {/* NEW: Manual Attendance Section */}
+      <div className="attendance-marking">
+        <h4>📋 Take Attendance</h4>
+        <table>
+          <thead>
+            <tr>
+              <th>Roll No</th>
+              <th>Name</th>
+              <th>Class</th>
+              <th>Mark Attendance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {students.map((s) => (
+              <tr key={s._id}>
+                <td>{s.rollNo}</td>
+                <td>{s.fullName}</td>
+                <td>{s.className}</td>
+                <td>
+                  <button
+                    onClick={() => handleToggleAttendance(s.rollNo, s.fullName)}
+                    style={{
+                      background:
+                        attendanceRecord[s.rollNo] === "Present"
+                          ? "#4CAF50"
+                          : attendanceRecord[s.rollNo] === "Absent"
+                          ? "#f44336"
+                          : "#ddd",
+                      color: "white",
+                      border: "none",
+                      padding: "6px 10px",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {attendanceRecord[s.rollNo] || "Mark"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <button
+          style={{
+            marginTop: "10px",
+            background: "#0047AB",
+            color: "white",
+            border: "none",
+            padding: "8px 14px",
+            borderRadius: "4px",
+            cursor: "pointer",
+          }}
+          onClick={handleSubmitAttendance}
+        >
+          ✅ Submit Attendance
+        </button>
+
+        {/* Summary */}
+        <div style={{ marginTop: "15px" }}>
+          <h4>Summary</h4>
+          <p>
+            Present: {presentList.length} | Absent: {absentList.length}
+          </p>
+          <div className="summary-lists" style={{ display: "flex", gap: "40px" }}>
+            <div>
+              <h5>✅ Present Students:</h5>
+              <ul>
+                {presentList.map((s) => (
+                  <li key={s.rollNo}>
+                    {s.fullName} ({s.rollNo})
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <h5>❌ Absent Students:</h5>
+              <ul>
+                {absentList.map((s) => (
+                  <li key={s.rollNo}>
+                    {s.fullName} ({s.rollNo})
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
       </div>
-      <table>
-        <thead><tr><th>Date</th><th>Student</th><th>Roll</th><th>Class</th><th>Status</th></tr></thead>
-        <tbody>{attendance.map((a, i) => (
-          <tr key={i}><td>{a.date}</td><td>{a.student?.fullName}</td><td>{a.student?.rollNo}</td><td>{a.student?.className}</td><td>{a.status}</td></tr>
-        ))}</tbody>
-      </table>
+
+      {/* EXISTING REPORT SECTION */}
+      <div style={{ marginTop: "40px" }}>
+        <h4>📄 Attendance Report</h4>
+        <div style={{ marginBottom: "10px" }}>
+          <button onClick={() => exportCSV(attendance, "attendance_report")}>
+            ⬇ Export CSV
+          </button>
+          <button onClick={exportAttendancePDF}>📄 Export PDF</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Student</th>
+              <th>Roll</th>
+              <th>Class</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {attendance.map((a, i) => (
+              <tr key={i}>
+                <td>{a.date}</td>
+                <td>{a.student?.fullName}</td>
+                <td>{a.student?.rollNo}</td>
+                <td>{a.student?.className}</td>
+                <td>{a.status}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
+
+  // -------- RETURN UI --------
+  if (!token && page === "login") {
+    return (
+      <div className="centered">
+        <h2>Admin Login</h2>
+        <input
+          placeholder="Email"
+          value={loginEmail}
+          onChange={(e) => setLoginEmail(e.target.value)}
+        />
+        <input
+          placeholder="Password"
+          type="password"
+          value={loginPassword}
+          onChange={(e) => setLoginPassword(e.target.value)}
+        />
+        <button onClick={handleLogin}>Login</button>
+        <p>
+          No account? <button onClick={() => setPage("register")}>Register</button>
+        </p>
+      </div>
+    );
+  }
+
+  if (!token && page === "register") {
+    return (
+      <div className="centered">
+        <h2>Register Admin</h2>
+        <input
+          placeholder="Full Name"
+          value={regName}
+          onChange={(e) => setRegName(e.target.value)}
+        />
+        <input
+          placeholder="Institution Email"
+          value={regEmail}
+          onChange={(e) => setRegEmail(e.target.value)}
+        />
+        <input
+          placeholder="Password"
+          type="password"
+          value={regPassword}
+          onChange={(e) => setRegPassword(e.target.value)}
+        />
+        <input
+          placeholder="Institution Domain"
+          value={regDomain}
+          onChange={(e) => setRegDomain(e.target.value)}
+        />
+        <button onClick={handleRegister}>Register</button>
+        <p>
+          Already registered? <button onClick={() => setPage("login")}>Login</button>
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div>
       <nav className="navbar">
-        <h2>Attendance Admin Panel</h2>
-        <div>
-          <button onClick={() => setPage("dashboard")}>🏠 Dashboard</button>
-          <button onClick={() => setPage("teachers")}>👩‍🏫 Teachers</button>
-          <button onClick={() => setPage("students")}>🎓 Students</button>
-          <button onClick={() => setPage("attendance")}>🕒 Attendance</button>
-          <button onClick={logout}>🚪 Logout</button>
+        <h2>🏫 Admin Panel</h2>
+        <div className="nav-buttons">
+          <button onClick={() => setPage("dashboard")}>Dashboard</button>
+          <button onClick={() => setPage("teachers")}>Teachers</button>
+          <button onClick={() => setPage("students")}>Students</button>
+          <button onClick={() => setPage("attendance")}>Attendance</button>
+          <button onClick={logout}>Logout</button>
         </div>
       </nav>
-      <div className="page-container">
-        {page === "dashboard" && renderDashboard()}
-        {page === "teachers" && renderTeachers()}
-        {page === "students" && renderStudents()}
-        {page === "attendance" && renderAttendance()}
-      </div>
+
+      <main className="content">
+        {page === "dashboard"
+          ? renderDashboard()
+          : page === "teachers"
+          ? renderTeachers()
+          : page === "students"
+          ? renderStudents()
+          : renderAttendance()}
+      </main>
     </div>
   );
 }
-
-// ---- INLINE STYLES ----
-const style = document.createElement("style");
-style.innerHTML = `
-body { font-family: Arial, sans-serif; background: #f8f8f8; margin: 0; }
-.navbar { background: #0047AB; color: white; display: flex; justify-content: space-between; padding: 10px 20px; flex-wrap: wrap; }
-.navbar button { margin: 5px; background: white; color: #0047AB; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; }
-.navbar button:hover { background: #e6e6e6; }
-.centered { text-align: center; margin-top: 100px; }
-.centered input { display: block; margin: 10px auto; padding: 8px; width: 250px; }
-.page-container { padding: 20px; }
-table { width: 100%; background: white; border-collapse: collapse; margin-top: 15px; }
-th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-th { background: #f0f0f0; }
-.form-row input { margin: 5px; padding: 6px; }
-.form-row button { padding: 6px 10px; background: #0047AB; color: white; border: none; border-radius: 4px; cursor: pointer; }
-@media (max-width: 768px) {
-  .navbar { flex-direction: column; align-items: flex-start; }
-  .navbar button { width: 100%; margin: 4px 0; }
-}`;
-document.head.appendChild(style);
