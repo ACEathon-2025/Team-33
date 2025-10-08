@@ -10,7 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@emailjs/browser": "^4.4.1",
     "axios": "^1.12.2",
+    "emailjs-com": "^3.2.0",
+    "face-api.js": "^0.22.2",
     "jspdf": "^3.0.3",
     "jspdf-autotable": "^5.0.2",
     "qrcode.react": "^4.2.0",

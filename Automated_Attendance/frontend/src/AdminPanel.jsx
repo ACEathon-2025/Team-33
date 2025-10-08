@@ -8,6 +8,8 @@ import "./AdminPanel.css";
 const API_BASE = "http://localhost:5000/api";
 
 export default function AdminPanel() {
+
+  
   const [token, setToken] = useState(localStorage.getItem("admintoken") || "");
   const [page, setPage] = useState("login");
 

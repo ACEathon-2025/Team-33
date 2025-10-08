@@ -16,7 +16,7 @@ app.use(cors());
 app.use(express.json());
 
 // --- MongoDB setup ---
-const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/attendance_db";
+const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/attendance_db";
 mongoose
   .connect(MONGO_URI)
   .then(() => console.log("✅ Connected to MongoDB"))
@@ -47,6 +47,7 @@ const studentSchema = new mongoose.Schema({
   parentName: String,
   parentNumber: String,
   qrCode: String,
+  descriptor: String,  // New: Store face descriptor as JSON string
 });
 const Student = mongoose.model("Student", studentSchema);
 
@@ -66,151 +67,104 @@ async function generateQRCode(studentData) {
 function authMiddleware(requiredRole = "admin") {
   return async (req, res, next) => {
     const authHeader = req.headers.authorization;
-    if (!authHeader) return res.status(401).json({ message: "No token" });
+    if (!authHeader) return res.status(401).json({ message: "No token provided" });
     const token = authHeader.split(" ")[1];
     try {
-      const payload = jwt.verify(token, process.env.JWT_SECRET || "secretkey");
-      req.user = payload; 
-      if (requiredRole !== "any" && payload.role !== requiredRole) {
-        return res.status(403).json({ message: "Forbidden: wrong role" });
-      }
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || "secret");
+      if (decoded.role !== requiredRole) return res.status(403).json({ message: "Forbidden" });
+      req.user = decoded;
       next();
     } catch (err) {
-      return res.status(401).json({ message: "Invalid token" });
+      res.status(401).json({ message: "Invalid token" });
     }
   };
 }
 
-// --- Routes ---
-// Health check
-app.get("/", (req, res) => res.send("Attendance backend up"));
-
-// Admin register
+// --- Auth Routes ---
 app.post("/api/admin/register", async (req, res) => {
   const { name, email, password, institutionDomain } = req.body;
-  if (!name || !email || !password || !institutionDomain) {
-    return res.status(400).json({ message: "Missing fields" });
-  }
-  const domain = email.split("@")[1];
-  if (domain !== institutionDomain) return res.status(400).json({ message: "Email domain mismatch" });
-  const exists = await Admin.findOne({ email });
-  if (exists) return res.status(400).json({ message: "Admin exists" });
-  const salt = await bcrypt.genSalt(10);
-  const passwordHash = await bcrypt.hash(password, salt);
+  const passwordHash = await bcrypt.hash(password, 10);
   const admin = new Admin({ name, email, passwordHash, institutionDomain });
   await admin.save();
-  res.status(201).json({ message: "Admin registered" });
+  res.json({ message: "Admin registered" });
 });
 
-// Admin login
 app.post("/api/admin/login", async (req, res) => {
   const { email, password } = req.body;
   const admin = await Admin.findOne({ email });
-  if (!admin) return res.status(400).json({ message: "Invalid credentials" });
-  const ok = await bcrypt.compare(password, admin.passwordHash);
-  if (!ok) return res.status(400).json({ message: "Invalid credentials" });
-  const token = jwt.sign({ userId: admin._id, role: "admin", email: admin.email }, process.env.JWT_SECRET || "secretkey", { expiresIn: "8h" });
-  res.json({ token, name: admin.name, email: admin.email });
+  if (!admin || !(await bcrypt.compare(password, admin.passwordHash))) {
+    return res.status(401).json({ message: "Invalid credentials" });
+  }
+  const token = jwt.sign({ id: admin._id, role: "admin" }, process.env.JWT_SECRET || "secret", { expiresIn: "1d" });
+  res.json({ token, role: "admin" });
 });
 
-// Teacher register
 app.post("/api/teachers/register", authMiddleware("admin"), async (req, res) => {
   const { name, email, password, classAssigned } = req.body;
-  if (!name || !email || !password) return res.status(400).json({ message: "Missing teacher fields" });
-  const exists = await Teacher.findOne({ email });
-  if (exists) return res.status(400).json({ message: "Teacher email exists" });
-  const salt = await bcrypt.genSalt(10);
-  const passwordHash = await bcrypt.hash(password, salt);
+  const passwordHash = await bcrypt.hash(password, 10);
   const teacher = new Teacher({ name, email, passwordHash, classAssigned });
   await teacher.save();
-  res.status(201).json({ message: "Teacher created", teacher: { id: teacher._id, name: teacher.name, email: teacher.email, classAssigned } });
+  res.json({ message: "Teacher added" });
 });
 
-// List teachers
+app.post("/api/teachers/login", async (req, res) => {
+  const { email, password } = req.body;
+  const teacher = await Teacher.findOne({ email });
+  if (!teacher || !(await bcrypt.compare(password, teacher.passwordHash))) {
+    return res.status(401).json({ message: "Invalid credentials" });
+  }
+  const token = jwt.sign({ id: teacher._id, role: "teacher" }, process.env.JWT_SECRET || "secret", { expiresIn: "1d" });
+  res.json({ token, role: "teacher" });
+});
+
+// --- Teacher Routes ---
 app.get("/api/teachers", authMiddleware("admin"), async (req, res) => {
-  const teachers = await Teacher.find().select("-passwordHash");
-  res.json(teachers);
+  res.json(await Teacher.find());
 });
 
-// Student register
-app.post("/api/students/register", authMiddleware("any"), async (req, res) => {
-  const { fullName, rollNo, className, section, parentName, parentNumber } = req.body;
-  if (!fullName || !rollNo || !className) return res.status(400).json({ message: "Missing student required fields" });
-  const exists = await Student.findOne({ rollNo });
-  if (exists) return res.status(400).json({ message: "Student exists" });
-  const qrCode = await generateQRCode({ fullName, rollNo, className, section, parentName, parentNumber });
-  const student = new Student({ fullName, rollNo, className, section, parentName, parentNumber, qrCode });
+// --- Student Routes ---
+app.post("/api/students", authMiddleware("admin"), async (req, res) => {
+  const studentData = req.body;
+  studentData.qrCode = await generateQRCode(studentData);
+  const student = new Student(studentData);
   await student.save();
-  res.status(201).json({ message: "Student registered", student });
+  res.json(student);
 });
 
-// List students
-app.get("/api/students", authMiddleware("any"), async (req, res) => {
-  const students = await Student.find();
-  res.json(students);
+app.get("/api/students", authMiddleware(), async (req, res) => {
+  res.json(await Student.find());
 });
 
-// Delete a student
-app.delete("/api/students/:id", authMiddleware("any"), async (req, res) => {
-  const student = await Student.findByIdAndDelete(req.params.id);
+// New: Update student face descriptor (called from teacher enrollment)
+app.patch("/api/students/:id/descriptor", authMiddleware("teacher"), async (req, res) => {
+  const { descriptor } = req.body;
+  const student = await Student.findByIdAndUpdate(req.params.id, { descriptor }, { new: true });
   if (!student) return res.status(404).json({ message: "Student not found" });
-  res.json({ message: "Deleted" });
+  res.json(student);
 });
 
-// --- Bulk Attendance Marking ---
-app.post("/api/attendance/mark", authMiddleware("any"), async (req, res) => {
-  const { records } = req.body; // [{ rollNo, status, date? }]
-  if (!records || !Array.isArray(records) || records.length === 0) return res.status(400).json({ message: "No attendance records provided" });
-
-  const today = new Date().toISOString().slice(0, 10);
-  const savedRecords = [];
-
-  for (const rec of records) {
-    const { rollNo, status, date } = rec;
-    if (!rollNo || !status || !["Present", "Absent"].includes(status)) continue;
-
-    const student = await Student.findOne({ rollNo });
-    if (!student) continue;
-
-    const attDate = date || today;
-
-    const existing = await Attendance.findOne({ student: student._id, date: attDate });
-    if (existing) continue;
-
-    const attendanceEntry = new Attendance({ student: student._id, date: attDate, status });
-    await attendanceEntry.save();
-    savedRecords.push(attendanceEntry);
-  }
-
-  res.status(201).json({ message: "Attendance saved", count: savedRecords.length });
+// --- Attendance Routes ---
+app.post("/api/attendance", authMiddleware(), async (req, res) => {
+  const attendance = new Attendance(req.body);
+  await attendance.save();
+  res.json(attendance);
 });
 
-// Attendance report
-app.get("/api/attendance/report", authMiddleware("any"), async (req, res) => {
-  const { className } = req.query;
-  const filter = {};
-  if (className) {
-    const studs = await Student.find({ className });
-    const ids = studs.map((s) => s._id);
-    filter.student = { $in: ids };
-  }
-  const records = await Attendance.find(filter).populate("student", "fullName rollNo className");
-  res.json(records);
+app.get("/api/attendance", authMiddleware(), async (req, res) => {
+  res.json(await Attendance.find().populate("student"));
 });
 
-// Admin stats
-app.get("/api/admin/stats", authMiddleware("any"), async (req, res) => {
-  const totalStudents = await Student.countDocuments();
-  const totalRecords = await Attendance.countDocuments();
-  const totalPresent = await Attendance.countDocuments({ status: "Present" });
-  const totalAbsent = await Attendance.countDocuments({ status: "Absent" });
-  const absentList = await Attendance.find({ status: "Absent" })
-    .populate("student", "fullName rollNo className section parentNumber")
-    .limit(10);
-  const attendanceRate = totalRecords ? ((totalPresent / totalRecords) * 100).toFixed(2) : 0;
-  res.json({ totalStudents, totalRecords, totalPresent, totalAbsent, attendanceRate, recentAbsentees: absentList });
+// --- Stats Route ---
+app.get("/api/stats", authMiddleware(), async (req, res) => {
+  const stats = {
+    totalTeachers: await Teacher.countDocuments(),
+    totalStudents: await Student.countDocuments(),
+    attendanceToday: await Attendance.countDocuments({ date: new Date().toISOString().split("T")[0] }),
+  };
+  res.json(stats);
 });
 
+// --- Export Routes ---
 // CSV export for attendance
 app.get("/api/attendance/export/csv", authMiddleware("admin"), async (req, res) => {
   const records = await Attendance.find().populate("student", "fullName rollNo className");
