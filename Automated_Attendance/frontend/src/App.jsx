@@ -8,6 +8,36 @@ import * as faceapi from 'face-api.js';
 import emailjs from '@emailjs/browser';
 import "./index.css";
 
+
+// AXIOS GLOBAL INTERCEPTOR FOR HANDLING 401 ERRORS
+axios.interceptors.response.use(
+  (response) => {
+    // If the request was successful (status code 2xx), just return the response
+    return response;
+  },
+  (error) => {
+    // Check if the error response exists and has a status code of 401
+    if (error.response && error.response.status === 401) {
+      console.error("AUTH ERROR: Token is expired or invalid. Logging out.");
+
+      // Remove both admin and teacher tokens from local storage to be safe
+      localStorage.removeItem("admintoken");
+      localStorage.removeItem("teachertoken");
+
+      // Redirect the user to the login page.
+      // We use window.location.href to force a full page reload,
+      // which clears all component states and ensures a clean logout.
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    }
+
+    // For any other errors (e.g., server down, other codes), just let them proceed
+    return Promise.reject(error);
+  }
+);
+
+
 // EnrollmentModal Component
 function EnrollmentModal({ setStatus, modelsLoaded, setEnrolledStudents, closeModal }) {
   const videoRef = useRef(null);
@@ -28,7 +58,8 @@ function EnrollmentModal({ setStatus, modelsLoaded, setEnrolledStudents, closeMo
       setIsCameraOn(true);
       setStatus("Camera started. Position student's face.");
     } catch (err) {
-      setStatus('Webcam access denied.');
+      setStatus('Webcam access denied. Please allow camera access.');
+      console.error('Webcam error:', err);
     }
   };
 
@@ -37,31 +68,42 @@ function EnrollmentModal({ setStatus, modelsLoaded, setEnrolledStudents, closeMo
       setStatus("Name and USN are required.");
       return;
     }
-    setStatus(`Capturing face for ${formData.name}...`);
+    setStatus(`Capturing multiple faces for ${formData.name}... Please hold still and vary your angle slightly.`);
 
     try {
-      const detection = await faceapi
-        .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions())
-        .withFaceLandmarks()
-        .withFaceDescriptor();
+      const descriptors = [];
+      for (let i = 0; i < 3; i++) { // Capture 3 descriptors for better accuracy
+        const detection = await faceapi
+          .detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.6 })) // Use SSD for higher accuracy
+          .withFaceLandmarks()
+          .withFaceDescriptor();
 
-      if (!detection) {
-        setStatus("Enrollment failed: No face detected.");
-        return;
+        if (!detection) {
+          setStatus(`Capture ${i + 1} failed: No face detected. Ensure face is centered and well-lit.`);
+          return;
+        }
+        descriptors.push(detection.descriptor);
+        console.log(`Capture ${i + 1} descriptor:`, detection.descriptor); // Debug descriptor
+        await new Promise(resolve => setTimeout(resolve, 500)); // 0.5s delay for slight variation
       }
 
       const label = `${formData.name} (${formData.usn})`;
       const newStudent = {
         ...formData,
         label,
-        descriptor: new faceapi.LabeledFaceDescriptors(label, [detection.descriptor])
+        descriptor: new faceapi.LabeledFaceDescriptors(label, descriptors) // Multiple descriptors
       };
 
-      setEnrolledStudents(prev => [...prev, newStudent]);
-      setStatus(`${formData.name} enrolled successfully!`);
+      setEnrolledStudents(prev => {
+        const updated = [...prev, newStudent];
+        console.log('Enrolled student:', newStudent); // Debug enrollment
+        return updated;
+      });
+      setStatus(`${formData.name} enrolled successfully with multiple captures!`);
       closeModal();
     } catch (error) {
-      setStatus("An error occurred during enrollment.");
+      setStatus("An error occurred during enrollment. Check console.");
+      console.error('Enrollment error:', error);
     }
   };
 
@@ -112,7 +154,7 @@ function EnrollmentModal({ setStatus, modelsLoaded, setEnrolledStudents, closeMo
             <button onClick={startCamera} className="btn btn-secondary">Start Camera</button>
           ) : (
             <button onClick={handleEnroll} disabled={!modelsLoaded} className="btn btn-primary">
-              Capture and Enroll
+              Capture Multiple and Enroll
             </button>
           )}
           <button onClick={closeModal} className="btn btn-danger">Cancel</button>
@@ -163,7 +205,8 @@ function StudentModule({ setStatus, modelsLoaded, enrolledStudents, attendance, 
         const stream = await navigator.mediaDevices.getUserMedia({ video: {} });
         videoRef.current.srcObject = stream;
       } catch (err) {
-        setStatus('Webcam access denied.');
+        setStatus('Webcam access denied. Please allow camera access.');
+        console.error('Webcam error:', err);
       }
     };
     startWebcam();
@@ -189,13 +232,14 @@ function StudentModule({ setStatus, modelsLoaded, enrolledStudents, attendance, 
   };
 
   const startRecognition = () => {
-    const faceMatcher = new faceapi.FaceMatcher(enrolledStudents.map(s => s.descriptor), 0.6);
+    const faceMatcher = new faceapi.FaceMatcher(enrolledStudents.map(s => s.descriptor), 0.4); // Stricter threshold for accuracy
 
     recognitionIntervalRef.current = setInterval(async () => {
       if (!videoRef.current || videoRef.current.readyState !== 4) return;
 
+      // NEW, FASTER CODE
       const detections = await faceapi
-        .detectAllFaces(videoRef.current, new faceapi.TinyFaceDetectorOptions())
+        .detectAllFaces(videoRef.current, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })) // FAST
         .withFaceLandmarks()
         .withFaceDescriptors();
       const displaySize = { width: videoRef.current.videoWidth, height: videoRef.current.videoHeight };
@@ -210,6 +254,7 @@ function StudentModule({ setStatus, modelsLoaded, enrolledStudents, attendance, 
 
       for (const detection of resizedDetections) {
         const bestMatch = faceMatcher.findBestMatch(detection.descriptor);
+        console.log('Best match:', bestMatch); // Debug match results
         const student = enrolledStudents.find(s => s.label === bestMatch.label);
         const box = detection.detection.box;
 
@@ -367,25 +412,20 @@ function TeacherModule({ setStatus, modelsLoaded, enrolledStudents, setEnrolledS
     setClassForm(prev => ({ ...prev, [name]: value }));
   };
 
-// In your TeacherModule Component
-
   const handleCreateClass = () => {
-    if (!classForm.className) return setStatus("Class name is required.");
-    const newClass = { 
-      ...classForm, 
-      date: new Date().toLocaleDateString(),
-      gracePeriod: parseInt(classForm.gracePeriod)
-    };
-    const classes = localStorage.getItem('classes') ? JSON.parse(localStorage.getItem('classes')) : [];
-    localStorage.setItem('classes', JSON.stringify([...classes, newClass]));
-    setTodayClasses(prev => [...prev, newClass]);
-    // This line is correct, as the StudentModule will read it
-    localStorage.setItem('currentClass', JSON.stringify(newClass)); 
-    setStatus(`Class "${classForm.className}" created. Redirecting to start attendance...`);
-    
-    // 👇 THIS IS THE CORRECTED LINE 👇
-    navigate('/student'); 
-  };
+    if (!classForm.className) return setStatus("Class name is required.");
+    const newClass = {
+      ...classForm,
+      date: new Date().toLocaleDateString(),
+      gracePeriod: parseInt(classForm.gracePeriod)
+    };
+    const classes = localStorage.getItem('classes') ? JSON.parse(localStorage.getItem('classes')) : [];
+    localStorage.setItem('classes', JSON.stringify([...classes, newClass]));
+    setTodayClasses(prev => [...prev, newClass]);
+    localStorage.setItem('currentClass', JSON.stringify(newClass));
+    setStatus(`Class "${classForm.className}" created. Redirecting to start attendance...`);
+    navigate('/student');
+  };
 
   const handleManualOverride = (usn, isPresent) => {
     if (isPresent) {
@@ -413,7 +453,7 @@ function TeacherModule({ setStatus, modelsLoaded, enrolledStudents, setEnrolledS
     const today = new Date().toLocaleDateString();
     const todayAttendance = attendance.filter(a => a.date === today);
     const currentClass = localStorage.getItem('currentClass') ? JSON.parse(localStorage.getItem('currentClass')) : null;
-    
+
     let summaryStudents = enrolledStudents.map(s => ({ ...s, status: 'Absent' }));
     const present = [];
     const late = [];
@@ -424,12 +464,12 @@ function TeacherModule({ setStatus, modelsLoaded, enrolledStudents, setEnrolledS
         const studentIndex = summaryStudents.findIndex(s => s.usn === rec.usn);
         if (studentIndex > -1) {
           summaryStudents.splice(studentIndex, 1);
-          
+
           if (currentClass && currentClass.gracePeriod) {
             const attendanceTime = new Date(`2000-01-01T${rec.timestamp}`);
             const classStart = new Date(`2000-01-01T${currentClass.classTime}`);
             const graceEnd = new Date(classStart.getTime() + (currentClass.gracePeriod * 60 * 1000));
-            
+
             if (attendanceTime > graceEnd) {
               late.push({ ...student, status: 'Late' });
             } else {
@@ -464,7 +504,7 @@ function TeacherModule({ setStatus, modelsLoaded, enrolledStudents, setEnrolledS
   const sendNotifications = (summary, type = 'absent') => {
     const toNotify = type === 'late' ? summary.late : summary.absent;
     const currentClass = localStorage.getItem('currentClass') ? JSON.parse(localStorage.getItem('currentClass')) : null;
-    
+
     toNotify.forEach(studentEntry => {
       const student = enrolledStudents.find(s => s.name === studentEntry.split(' (')[0]);
       if (student && student.parentEmail) {
@@ -477,7 +517,7 @@ function TeacherModule({ setStatus, modelsLoaded, enrolledStudents, setEnrolledS
         emailjs.send('YOUR_SERVICE_ID', 'YOUR_TEMPLATE_ID', templateParams, 'YOUR_USER_ID')
           .then(() => setStatus(`Email sent to ${student.parentEmail} for ${type}.`))
           .catch(err => setStatus(`Email error: ${err.text}`));
-        
+
         console.log(`SMS to ${student.parentPhone}: ${templateParams.message}`);
         setStatus('SMS requires backend (e.g., Twilio). Simulated.');
       }
@@ -487,7 +527,7 @@ function TeacherModule({ setStatus, modelsLoaded, enrolledStudents, setEnrolledS
   const handleGenerateReport = () => {
     const now = new Date();
     let startDate, endDate;
-    
+
     switch (reportType) {
       case 'daily':
         startDate = endDate = now.toLocaleDateString();
@@ -504,6 +544,8 @@ function TeacherModule({ setStatus, modelsLoaded, enrolledStudents, setEnrolledS
         startDate = startOfMonth.toLocaleDateString();
         endDate = endOfMonth.toLocaleDateString();
         break;
+      default:
+        startDate = endDate = now.toLocaleDateString();
     }
 
     const filteredAttendance = attendance.filter(a => {
@@ -556,29 +598,29 @@ function TeacherModule({ setStatus, modelsLoaded, enrolledStudents, setEnrolledS
           <div className="card">
             <h2>Create Class</h2>
             <div className="enrollment-form">
-              <input 
-                type="text" 
-                name="className" 
-                placeholder="Class Name (e.g., Math 101)" 
-                value={classForm.className} 
-                onChange={handleClassInputChange} 
-                className="input-field" 
+              <input
+                type="text"
+                name="className"
+                placeholder="Class Name (e.g., Math 101)"
+                value={classForm.className}
+                onChange={handleClassInputChange}
+                className="input-field"
               />
-              <input 
-                type="time" 
-                name="classTime" 
-                value={classForm.classTime} 
-                onChange={handleClassInputChange} 
-                className="input-field" 
+              <input
+                type="time"
+                name="classTime"
+                value={classForm.classTime}
+                onChange={handleClassInputChange}
+                className="input-field"
               />
-              <input 
-                type="number" 
-                name="gracePeriod" 
-                placeholder="Grace Period (minutes, e.g., 15)" 
-                value={classForm.gracePeriod} 
-                onChange={handleClassInputChange} 
-                className="input-field" 
-                min="0" 
+              <input
+                type="number"
+                name="gracePeriod"
+                placeholder="Grace Period (minutes, e.g., 15)"
+                value={classForm.gracePeriod}
+                onChange={handleClassInputChange}
+                className="input-field"
+                min="0"
                 max="60"
               />
               <button onClick={handleCreateClass} className="btn btn-primary">Create Class & Start Attendance</button>
@@ -628,16 +670,16 @@ function TeacherModule({ setStatus, modelsLoaded, enrolledStudents, setEnrolledS
                     <p><b>Present:</b> {s.present.join(', ') || 'None'}</p>
                     <p><b>Absent:</b> {s.absent.join(', ') || 'None'}</p>
                     <p><b>Late:</b> {s.late.join(', ') || 'None'}</p>
-                    <button 
-                      onClick={() => sendNotifications(s, 'absent')} 
-                      className="btn btn-secondary" 
+                    <button
+                      onClick={() => sendNotifications(s, 'absent')}
+                      className="btn btn-secondary"
                       style={{ marginTop: '10px' }}
                     >
                       Send Absent Notifications
                     </button>
-                    <button 
-                      onClick={() => sendNotifications(s, 'late')} 
-                      className="btn btn-warning" 
+                    <button
+                      onClick={() => sendNotifications(s, 'late')}
+                      className="btn btn-warning"
                       style={{ marginTop: '10px' }}
                     >
                       Send Late Notifications
@@ -653,9 +695,9 @@ function TeacherModule({ setStatus, modelsLoaded, enrolledStudents, setEnrolledS
           <div className="card">
             <h2>Generate Reports</h2>
             <div className="enrollment-form">
-              <select 
-                value={reportType} 
-                onChange={(e) => setReportType(e.target.value)} 
+              <select
+                value={reportType}
+                onChange={(e) => setReportType(e.target.value)}
                 className="input-field"
               >
                 <option value="daily">Daily</option>
@@ -698,40 +740,75 @@ function TeacherModule({ setStatus, modelsLoaded, enrolledStudents, setEnrolledS
       <aside className="sidebar">
         <h2 className="logo">Teacher Panel</h2>
         <nav className="nav">
-          <button className={`nav-link ${activePage === 'enrollment' ? 'active' : ''}`} onClick={() => setActivePage('enrollment')}>🧑‍🎓 Enrollment</button>
-          <button className={`nav-link ${activePage === 'create-class' ? 'active' : ''}`} onClick={() => setActivePage('create-class')}>📚 Create Class</button>
-          <button className={`nav-link ${activePage === 'attendance' ? 'active' : ''}`} onClick={() => setActivePage('attendance')}>📋 Attendance</button>
-          <button className={`nav-link ${activePage === 'summary' ? 'active' : ''}`} onClick={() => setActivePage('summary')}>📊 Summary</button>
-          <button className={`nav-link ${activePage === 'reports' ? 'active' : ''}`} onClick={() => setActivePage('reports')}>📈 Reports</button>
-          <button className={`nav-link ${activePage === 'notifications' ? 'active' : ''}`} onClick={() => setActivePage('notifications')}>🔔 Notifications</button>
-          <button className="nav-link logout" onClick={handleLogout}>🚪 Logout</button>
+          <button
+            className={`nav-link ${activePage === "enrollment" ? "active" : ""}`}
+            onClick={() => setActivePage("enrollment")}
+          >
+            🧑‍🎓 Enrollment
+          </button>
+          <button
+            className={`nav-link ${activePage === "create-class" ? "active" : ""}`}
+            onClick={() => setActivePage("create-class")}
+          >
+            📚 Create Class
+          </button>
+          <button
+            className={`nav-link ${activePage === "attendance" ? "active" : ""}`}
+            onClick={() => setActivePage("attendance")}
+          >
+            📋 Attendance
+          </button>
+          <button
+            className={`nav-link ${activePage === "summary" ? "active" : ""}`}
+            onClick={() => setActivePage("summary")}
+          >
+            📊 Summary
+          </button>
+          <button
+            className={`nav-link ${activePage === "reports" ? "active" : ""}`}
+            onClick={() => setActivePage("reports")}
+          >
+            📈 Reports
+          </button>
+          <button
+            className={`nav-link ${activePage === "notifications" ? "active" : ""}`}
+            onClick={() => setActivePage("notifications")}
+          >
+            🔔 Notifications
+          </button>
+          <button className="nav-link logout" onClick={handleLogout}>
+            🚪 Logout
+          </button>
         </nav>
       </aside>
+
       <div className="main-content">
         <header className="topbar">
-          <h1>{activePage.charAt(0).toUpperCase() + activePage.slice(1).replace(/-/g, ' ')}</h1>
+          <h1>
+            {activePage.charAt(0).toUpperCase() +
+              activePage.slice(1).replace(/-/g, " ")}
+          </h1>
         </header>
         <section className="page-content">{renderPage()}</section>
       </div>
 
-      {isModalOpen &&
+      {isModalOpen && (
         <EnrollmentModal
           setStatus={setStatus}
           modelsLoaded={modelsLoaded}
           setEnrolledStudents={setEnrolledStudents}
           closeModal={() => setIsModalOpen(false)}
         />
-      }
+      )}
     </div>
   );
 }
 
-// AdminPanel Component
+// COMPLETE AdminPanel Component
 function AdminPanel() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [token, setToken] = useState(localStorage.getItem("admintoken") || "");
-  const [page, setPage] = useState("login");
+  const [token, setToken] = useState(() => localStorage.getItem("admintoken"));
 
   // AUTH STATES
   const [loginEmail, setLoginEmail] = useState("");
@@ -767,16 +844,7 @@ function AdminPanel() {
   const [absentList, setAbsentList] = useState([]);
 
   const API_BASE = "http://localhost:5000/api";
-
-  useEffect(() => {
-    if (location.pathname === "/register") {
-      setPage("register");
-    } else if (location.pathname === "/login" || !token) {
-      setPage("login");
-    } else if (token) {
-      setPage("dashboard");
-    }
-  }, [location.pathname, token]);
+  const [activeTab, setActiveTab] = useState("dashboard");
 
   useEffect(() => {
     if (token) {
@@ -787,7 +855,7 @@ function AdminPanel() {
       fetchAttendance();
     } else {
       delete axios.defaults.headers.common["Authorization"];
-      if (location.pathname !== "/register") {
+      if (location.pathname !== "/register" && location.pathname !== "/login") {
         navigate('/login');
       }
     }
@@ -799,7 +867,7 @@ function AdminPanel() {
       setStats(res.data);
     } catch (err) {
       console.error("Error fetching stats:", err);
-      alert("Failed to fetch stats. Please try again.");
+      if (err.response?.status !== 401) alert("Failed to fetch stats.");
     }
   };
 
@@ -809,7 +877,7 @@ function AdminPanel() {
       setTeachers(res.data);
     } catch (err) {
       console.error("Error fetching teachers:", err);
-      alert("Failed to fetch teachers. Please try again.");
+      if (err.response?.status !== 401) alert("Failed to fetch teachers.");
     }
   };
 
@@ -819,7 +887,7 @@ function AdminPanel() {
       setStudents(res.data);
     } catch (err) {
       console.error("Error fetching students:", err);
-      alert("Failed to fetch students. Please try again.");
+      if (err.response?.status !== 401) alert("Failed to fetch students.");
     }
   };
 
@@ -829,7 +897,7 @@ function AdminPanel() {
       setAttendance(res.data);
     } catch (err) {
       console.error("Error fetching attendance:", err);
-      alert("Failed to fetch attendance. Please try again.");
+      if (err.response?.status !== 401) alert("Failed to fetch attendance.");
     }
   };
 
@@ -841,7 +909,6 @@ function AdminPanel() {
       });
       localStorage.setItem("admintoken", res.data.token);
       setToken(res.data.token);
-      setPage("dashboard");
       navigate('/');
       alert("✅ Login successful!");
     } catch (err) {
@@ -857,12 +924,11 @@ function AdminPanel() {
         password: regPassword,
         institutionDomain: regDomain,
       });
-      alert("✅ Admin registered successfully!");
+      alert("✅ Admin registered successfully! Please log in.");
       setRegName("");
       setRegEmail("");
       setRegPassword("");
       setRegDomain("");
-      setPage("login");
       navigate('/login');
     } catch (err) {
       alert(err.response?.data?.message || "Registration failed");
@@ -871,8 +937,7 @@ function AdminPanel() {
 
   const logout = () => {
     localStorage.removeItem("admintoken");
-    setToken("");
-    setPage("login");
+    setToken(null);
     navigate('/login');
   };
 
@@ -920,9 +985,7 @@ function AdminPanel() {
 
   const handleDownloadQR = (rollNo) => {
     const canvas = document.getElementById(`qr-${rollNo}`);
-    const pngUrl = canvas
-      .toDataURL("image/png")
-      .replace("image/png", "image/octet-stream");
+    const pngUrl = canvas.toDataURL("image/png").replace("image/png", "image/octet-stream");
     const link = document.createElement("a");
     link.href = pngUrl;
     link.download = `${rollNo}_QR.png`;
@@ -934,9 +997,7 @@ function AdminPanel() {
   const exportCSV = (data, filename) => {
     if (!data || data.length === 0) return alert("No data to export!");
     const headers = Object.keys(data[0]);
-    const rows = data.map((obj) =>
-      headers.map((header) => `"${obj[header] ?? ""}"`).join(",")
-    );
+    const rows = data.map((obj) => headers.map((header) => `"${obj[header] ?? ""}"`).join(","));
     const csv = [headers.join(","), ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const link = document.createElement("a");
@@ -948,35 +1009,31 @@ function AdminPanel() {
   const exportAttendancePDF = () => {
     const doc = new jsPDF();
     doc.text("Attendance Report", 14, 15);
-    const rows = attendance.map((a) => [
-      a.date,
-      a.student?.fullName || "",
-      a.student?.rollNo || "",
-      a.student?.className || "",
+    const tableData = attendance.map((a) => [
+      new Date(a.date).toLocaleDateString(),
+      a.student?.fullName || "N/A",
+      a.student?.rollNo || "N/A",
+      a.student?.className || "N/A",
       a.status,
     ]);
     doc.autoTable({
-      head: [["Date", "Student", "Roll", "Class", "Status"]],
-      body: rows,
+      head: [["Date", "Student", "Roll No", "Class", "Status"]],
+      body: tableData,
       startY: 25,
     });
     doc.save("attendance_report.pdf");
   };
 
-  const handleToggleAttendance = (rollNo, name) => {
+  const handleToggleAttendance = (rollNo) => {
     setAttendanceRecord((prev) => {
       const newStatus = prev[rollNo] === "Present" ? "Absent" : "Present";
       const updated = { ...prev, [rollNo]: newStatus };
 
-      const allPresent = Object.entries(updated)
-        .filter(([_, status]) => status === "Present")
-        .map(([r]) => r);
-      const allAbsent = Object.entries(updated)
-        .filter(([_, status]) => status === "Absent")
-        .map(([r]) => r);
+      const presentRollNos = Object.keys(updated).filter(r => updated[r] === 'Present');
+      const absentRollNos = students.filter(s => !presentRollNos.includes(s.rollNo)).map(s => s.rollNo);
 
-      setPresentList(students.filter((s) => allPresent.includes(s.rollNo)));
-      setAbsentList(students.filter((s) => allAbsent.includes(s.rollNo)));
+      setPresentList(students.filter(s => presentRollNos.includes(s.rollNo)));
+      setAbsentList(students.filter(s => absentRollNos.includes(s.rollNo)));
 
       return updated;
     });
@@ -1011,7 +1068,7 @@ function AdminPanel() {
           <li>Attendance Rate: {stats.attendanceRate}%</li>
         </ul>
       ) : (
-        <p>Loading...</p>
+        <p>Loading stats...</p>
       )}
       <button onClick={() => navigate('/teacher')}>Go to Teacher Module</button>
       <button onClick={() => navigate('/student')}>Go to Student Module</button>
@@ -1022,49 +1079,20 @@ function AdminPanel() {
     <div className="admin-card">
       <h3>👩‍🏫 Manage Teachers</h3>
       <div className="form-row">
-        <input
-          placeholder="Name"
-          value={teacherName}
-          onChange={(e) => setTeacherName(e.target.value)}
-          className="input-field"
-        />
-        <input
-          placeholder="Email"
-          value={teacherEmail}
-          onChange={(e) => setTeacherEmail(e.target.value)}
-          className="input-field"
-        />
-        <input
-          placeholder="Password"
-          type="password"
-          value={teacherPassword}
-          onChange={(e) => setTeacherPassword(e.target.value)}
-          className="input-field"
-        />
-        <input
-          placeholder="Class Assigned"
-          value={teacherClass}
-          onChange={(e) => setTeacherClass(e.target.value)}
-          className="input-field"
-        />
+        <input placeholder="Name" value={teacherName} onChange={(e) => setTeacherName(e.target.value)} className="input-field" />
+        <input placeholder="Email" value={teacherEmail} onChange={(e) => setTeacherEmail(e.target.value)} className="input-field" />
+        <input placeholder="Password" type="password" value={teacherPassword} onChange={(e) => setTeacherPassword(e.target.value)} className="input-field" />
+        <input placeholder="Class Assigned" value={teacherClass} onChange={(e) => setTeacherClass(e.target.value)} className="input-field" />
         <button onClick={handleAddTeacher} className="btn btn-primary">Add Teacher</button>
       </div>
-      <button onClick={() => exportCSV(teachers, "teachers")} className="btn btn-secondary">⬇ Export CSV</button>
+      <button onClick={() => exportCSV(teachers, "teachers_list")} className="btn btn-secondary">⬇ Export CSV</button>
       <table>
         <thead>
-          <tr>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Class</th>
-          </tr>
+          <tr><th>Name</th><th>Email</th><th>Class</th></tr>
         </thead>
         <tbody>
           {teachers.map((t) => (
-            <tr key={t._id}>
-              <td>{t.name}</td>
-              <td>{t.email}</td>
-              <td>{t.classAssigned}</td>
-            </tr>
+            <tr key={t._id}><td>{t.name}</td><td>{t.email}</td><td>{t.classAssigned}</td></tr>
           ))}
         </tbody>
       </table>
@@ -1075,75 +1103,25 @@ function AdminPanel() {
     <div className="admin-card">
       <h3>🎓 Manage Students</h3>
       <div className="form-row">
-        <input
-          placeholder="Full Name"
-          value={studentFullName}
-          onChange={(e) => setStudentFullName(e.target.value)}
-          className="input-field"
-        />
-        <input
-          placeholder="Roll No"
-          value={studentRollNo}
-          onChange={(e) => setStudentRollNo(e.target.value)}
-          className="input-field"
-        />
-        <input
-          placeholder="Class"
-          value={studentClass}
-          onChange={(e) => setStudentClass(e.target.value)}
-          className="input-field"
-        />
-        <input
-          placeholder="Section"
-          value={studentSection}
-          onChange={(e) => setStudentSection(e.target.value)}
-          className="input-field"
-        />
-        <input
-          placeholder="Parent Name"
-          value={parentName}
-          onChange={(e) => setParentName(e.target.value)}
-          className="input-field"
-        />
-        <input
-          placeholder="Parent Number"
-          value={parentNumber}
-          onChange={(e) => setParentNumber(e.target.value)}
-          className="input-field"
-        />
+        <input placeholder="Full Name" value={studentFullName} onChange={(e) => setStudentFullName(e.target.value)} className="input-field" />
+        <input placeholder="Roll No" value={studentRollNo} onChange={(e) => setStudentRollNo(e.target.value)} className="input-field" />
+        <input placeholder="Class" value={studentClass} onChange={(e) => setStudentClass(e.target.value)} className="input-field" />
+        <input placeholder="Section" value={studentSection} onChange={(e) => setStudentSection(e.target.value)} className="input-field" />
+        <input placeholder="Parent Name" value={parentName} onChange={(e) => setParentName(e.target.value)} className="input-field" />
+        <input placeholder="Parent Number" value={parentNumber} onChange={(e) => setParentNumber(e.target.value)} className="input-field" />
         <button onClick={handleAddStudent} className="btn btn-primary">Add Student</button>
       </div>
-      <button onClick={() => exportCSV(students, "students")} className="btn btn-secondary">⬇ Export CSV</button>
+      <button onClick={() => exportCSV(students, "students_list")} className="btn btn-secondary">⬇ Export CSV</button>
       <table>
         <thead>
-          <tr>
-            <th>QR</th>
-            <th>Roll</th>
-            <th>Name</th>
-            <th>Class</th>
-            <th>Section</th>
-            <th>Parent</th>
-            <th>Contact</th>
-            <th>Action</th>
-          </tr>
+          <tr><th>QR</th><th>Roll</th><th>Name</th><th>Class</th><th>Section</th><th>Parent</th><th>Contact</th><th>Action</th></tr>
         </thead>
         <tbody>
           {students.map((s) => (
             <tr key={s._id}>
-              <td>
-                <QRCodeCanvas id={`qr-${s.rollNo}`} value={s.rollNo} size={50} />
-              </td>
-              <td>{s.rollNo}</td>
-              <td>{s.fullName}</td>
-              <td>{s.className}</td>
-              <td>{s.section}</td>
-              <td>{s.parentName}</td>
-              <td>{s.parentNumber}</td>
-              <td>
-                <button onClick={() => handleDownloadQR(s.rollNo)} className="btn btn-primary">
-                  Download QR
-                </button>
-              </td>
+              <td><QRCodeCanvas id={`qr-${s.rollNo}`} value={s.rollNo} size={50} /></td>
+              <td>{s.rollNo}</td><td>{s.fullName}</td><td>{s.className}</td><td>{s.section}</td><td>{s.parentName}</td><td>{s.parentNumber}</td>
+              <td><button onClick={() => handleDownloadQR(s.rollNo)} className="btn btn-primary">Download QR</button></td>
             </tr>
           ))}
         </tbody>
@@ -1173,14 +1151,12 @@ function AdminPanel() {
                 <td>{s.className}</td>
                 <td>
                   <button
-                    onClick={() => handleToggleAttendance(s.rollNo, s.fullName)}
+                    onClick={() => handleToggleAttendance(s.rollNo)}
                     style={{
                       background:
                         attendanceRecord[s.rollNo] === "Present"
                           ? "#4CAF50"
-                          : attendanceRecord[s.rollNo] === "Absent"
-                          ? "#f44336"
-                          : "#ddd",
+                          : "#f44336",
                       color: "white",
                       border: "none",
                       padding: "6px 10px",
@@ -1188,7 +1164,7 @@ function AdminPanel() {
                       cursor: "pointer",
                     }}
                   >
-                    {attendanceRecord[s.rollNo] || "Mark"}
+                    {attendanceRecord[s.rollNo] || "Absent"}
                   </button>
                 </td>
               </tr>
@@ -1214,28 +1190,6 @@ function AdminPanel() {
           <p>
             Present: {presentList.length} | Absent: {absentList.length}
           </p>
-          <div className="summary-lists">
-            <div>
-              <h5>✅ Present Students:</h5>
-              <ul>
-                {presentList.map((s) => (
-                  <li key={s.rollNo}>
-                    {s.fullName} ({s.rollNo})
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div>
-              <h5>❌ Absent Students:</h5>
-              <ul>
-                {absentList.map((s) => (
-                  <li key={s.rollNo}>
-                    {s.fullName} ({s.rollNo})
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
         </div>
       </div>
       <div style={{ marginTop: "40px" }}>
@@ -1259,7 +1213,7 @@ function AdminPanel() {
           <tbody>
             {attendance.map((a, i) => (
               <tr key={i}>
-                <td>{a.date}</td>
+                <td>{new Date(a.date).toLocaleDateString()}</td>
                 <td>{a.student?.fullName}</td>
                 <td>{a.student?.rollNo}</td>
                 <td>{a.student?.className}</td>
@@ -1272,67 +1226,28 @@ function AdminPanel() {
     </div>
   );
 
-  if (!token && page === "login") {
+  if (location.pathname === '/register') {
     return (
       <div className="centered">
-        <h2>Admin Login</h2>
-        <input
-          placeholder="Institution Email"
-          value={loginEmail}
-          onChange={(e) => setLoginEmail(e.target.value)}
-          className="input-field"
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={loginPassword}
-          onChange={(e) => setLoginPassword(e.target.value)}
-          className="input-field"
-        />
-        <button onClick={handleLogin} className="btn btn-primary">Login</button>
-        <p>
-          No account?{" "}
-          <button onClick={() => setPage("register")} className="btn btn-secondary">
-            Register
-          </button>
-        </p>
+        <h2>Register Admin</h2>
+        <input placeholder="Full Name" value={regName} onChange={(e) => setRegName(e.target.value)} className="input-field" />
+        <input placeholder="Institution Email" value={regEmail} onChange={(e) => setRegEmail(e.target.value)} className="input-field" />
+        <input placeholder="Password" type="password" value={regPassword} onChange={(e) => setRegPassword(e.target.value)} className="input-field" />
+        <input placeholder="Institution Domain" value={regDomain} onChange={(e) => setRegDomain(e.target.value)} className="input-field" />
+        <button onClick={handleRegister} className="btn btn-primary">Register</button>
+        <p>Already registered? <button onClick={() => navigate('/login')} className="btn btn-secondary">Login</button></p>
       </div>
     );
   }
 
-  if (!token && page === "register") {
+  if (!token) {
     return (
       <div className="centered">
-        <h2>Register Admin</h2>
-        <input
-          placeholder="Full Name"
-          value={regName}
-          onChange={(e) => setRegName(e.target.value)}
-          className="input-field"
-        />
-        <input
-          placeholder="Institution Email"
-          value={regEmail}
-          onChange={(e) => setRegEmail(e.target.value)}
-          className="input-field"
-        />
-        <input
-          placeholder="Password"
-          type="password"
-          value={regPassword}
-          onChange={(e) => setRegPassword(e.target.value)}
-          className="input-field"
-        />
-        <input
-          placeholder="Institution Domain"
-          value={regDomain}
-          onChange={(e) => setRegDomain(e.target.value)}
-          className="input-field"
-        />
-        <button onClick={handleRegister} className="btn btn-primary">Register</button>
-        <p>
-          Already registered? <button onClick={() => navigate('/login')} className="btn btn-secondary">Login</button>
-        </p>
+        <h2>Admin Login</h2>
+        <input placeholder="Institution Email" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} className="input-field" />
+        <input type="password" placeholder="Password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} className="input-field" />
+        <button onClick={handleLogin} className="btn btn-primary">Login</button>
+        <p>No account? <button onClick={() => navigate('/register')} className="btn btn-secondary">Register</button></p>
       </div>
     );
   }
@@ -1342,21 +1257,18 @@ function AdminPanel() {
       <nav className="navbar">
         <h2>🏫 Admin Panel</h2>
         <div className="nav-buttons">
-          <button onClick={() => setPage("dashboard")}>Dashboard</button>
-          <button onClick={() => setPage("teachers")}>Teachers</button>
-          <button onClick={() => setPage("students")}>Students</button>
-          <button onClick={() => setPage("attendance")}>Attendance</button>
+          <button onClick={() => setActiveTab("dashboard")}>Dashboard</button>
+          <button onClick={() => setActiveTab("teachers")}>Teachers</button>
+          <button onClick={() => setActiveTab("students")}>Students</button>
+          <button onClick={() => setActiveTab("attendance")}>Attendance</button>
           <button onClick={logout}>Logout</button>
         </div>
       </nav>
       <main className="content">
-        {page === "dashboard"
-          ? renderDashboard()
-          : page === "teachers"
-          ? renderTeachers()
-          : page === "students"
-          ? renderStudents()
-          : renderAttendance()}
+        {activeTab === "dashboard" ? renderDashboard()
+          : activeTab === "teachers" ? renderTeachers()
+            : activeTab === "students" ? renderStudents()
+              : renderAttendance()}
       </main>
     </div>
   );
@@ -1499,19 +1411,20 @@ export default function App() {
   useEffect(() => {
     const loadApp = async () => {
       setStatus('Loading face recognition models...');
-      const MODEL_URL = '/models';
+      const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights'; // Use CDN for reliability
       try {
         await Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+          faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL), // Prioritize SSD for accuracy
           faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
           faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-          faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+          faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL), // Keep as fallback
         ]);
         setModelsLoaded(true);
         setStatus('Ready.');
+        console.log('Face-api.js models loaded successfully');
       } catch (error) {
         setStatus('Error loading models. Check console.');
-        console.error(error);
+        console.error('Model loading error:', error);
         return;
       }
 
@@ -1522,7 +1435,7 @@ export default function App() {
           const parsedData = JSON.parse(data);
           return parsedData.map(d => ({
             ...d,
-            descriptor: new faceapi.LabeledFaceDescriptors(d.label, [new Float32Array(Object.values(d.descriptor[0]))])
+            descriptor: new faceapi.LabeledFaceDescriptors(d.label, d.descriptor.map(desc => new Float32Array(Object.values(desc))))
           }));
         } catch (error) {
           console.error('Error parsing enrolled students:', error);
@@ -1550,8 +1463,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem('enrolledStudents', JSON.stringify(enrolledStudents));
+    if (enrolledStudents.length > 0) {
+      localStorage.setItem('enrolledStudents', JSON.stringify(enrolledStudents.map(s => ({
+        ...s,
+        descriptor: Array.from(s.descriptor.descriptors) // Convert Float32Array for JSON
+      }))));
+    }
   }, [enrolledStudents]);
+
 
   useEffect(() => {
     localStorage.setItem('attendance', JSON.stringify(attendance));
@@ -1560,18 +1479,11 @@ export default function App() {
   return (
     <Router>
       <Routes>
+        {/* This single route now handles '/', '/login', and '/register' for the admin */}
         <Route path="/login" element={<MainLogin />} />
         <Route path="/register" element={<AdminPanel />} />
-        <Route
-          path="/"
-          element={
-            localStorage.getItem('admintoken') ? (
-              <AdminPanel />
-            ) : (
-              <Navigate to="/login" />
-            )
-          }
-        />
+        <Route path="/*" element={<AdminPanel />} />
+
         <Route
           path="/teacher"
           element={

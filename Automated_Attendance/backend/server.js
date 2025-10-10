@@ -7,13 +7,13 @@ const jwt = require('jsonwebtoken');
 
 // Configuration
 const MONGO_URI = 'mongodb://localhost:27017/attendanceDB';
-const JWT_SECRET = 'your-secret-key-here';
+const JWT_SECRET = 'your-secret-key-here'; // Replace with a secure key in production
 const PORT = 5000;
 
 // Initialize Express app
 const app = express();
 app.use(cors());
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '10mb' })); // Increased limit for face descriptors
 
 // Connect to MongoDB
 mongoose.connect(MONGO_URI, {
@@ -83,6 +83,7 @@ const studentSchema = new mongoose.Schema({
   section: { type: String, required: true },
   parentName: { type: String, required: true },
   parentNumber: { type: String, required: true },
+  faceDescriptors: [[Number]], // Store multiple face descriptors (arrays of 128 floats each)
 });
 
 const Student = mongoose.model('Student', studentSchema);
@@ -91,6 +92,8 @@ const attendanceSchema = new mongoose.Schema({
   student: { type: mongoose.Schema.Types.ObjectId, ref: 'Student', required: true },
   date: { type: Date, default: Date.now },
   status: { type: String, enum: ['Present', 'Absent'], required: true },
+  className: { type: String }, // Added to track class context
+  confidence: { type: String }, // Added to store recognition confidence
 });
 
 const Attendance = mongoose.model('Attendance', attendanceSchema);
@@ -153,7 +156,7 @@ app.post('/api/admin/login', async (req, res) => {
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid password' });
     }
-    const token = jwt.sign({ id: admin._id, role: 'admin' }, JWT_SECRET, { expiresIn: '1h' });
+    const token = jwt.sign({ id: admin._id, role: 'admin' }, JWT_SECRET, { expiresIn: '24h' });
     res.json({ token });
   } catch (err) {
     console.error('Login error:', err);
@@ -192,7 +195,7 @@ app.post('/api/teachers/login', async (req, res) => {
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid password' });
     }
-    const token = jwt.sign({ id: teacher._id, role: 'teacher' }, JWT_SECRET, { expiresIn: '1h' });
+    const token = jwt.sign({ id: teacher._id, role: 'teacher' }, JWT_SECRET, { expiresIn: '24h' });
     res.json({ token });
   } catch (err) {
     console.error('Teacher login error:', err);
@@ -233,7 +236,7 @@ app.post('/api/teachers/register', auth, async (req, res) => {
 
 app.get('/api/students', auth, async (req, res) => {
   try {
-    const students = await Student.find();
+    const students = await Student.find({}, '-faceDescriptors'); // Exclude descriptors for general fetch
     res.json(students);
   } catch (err) {
     console.error('Students fetch error:', err);
@@ -241,21 +244,40 @@ app.get('/api/students', auth, async (req, res) => {
   }
 });
 
+app.get('/api/students/enrolled', auth, async (req, res) => {
+  try {
+    const students = await Student.find({ faceDescriptors: { $exists: true, $ne: [] } }); // Fetch students with descriptors
+    console.log('Fetched enrolled students:', students.length);
+    res.json(students);
+  } catch (err) {
+    console.error('Enrolled students fetch error:', err);
+    res.status(500).json({ message: 'Failed to fetch enrolled students: ' + err.message });
+  }
+});
+
 app.post('/api/students/register', auth, async (req, res) => {
   try {
-    const { fullName, rollNo, className, section, parentName, parentNumber } = req.body;
+    const { fullName, rollNo, className, section, parentName, parentNumber, faceDescriptors } = req.body;
     if (!fullName || !rollNo || !className || !section || !parentName || !parentNumber) {
-      return res.status(400).json({ message: 'All fields are required' });
+      return res.status(400).json({ message: 'All required fields must be provided' });
     }
-    console.log('Registering student:', { fullName, rollNo });
+    console.log('Registering student:', { fullName, rollNo, faceDescriptors: faceDescriptors ? 'Present' : 'Not provided' });
     const existingStudent = await Student.findOne({ rollNo });
     if (existingStudent) {
       return res.status(400).json({ message: 'Roll number already exists' });
     }
-    const student = new Student({ fullName, rollNo, className, section, parentName, parentNumber });
+    const student = new Student({
+      fullName,
+      rollNo,
+      className,
+      section,
+      parentName,
+      parentNumber,
+      faceDescriptors: faceDescriptors || [], // Store descriptors if provided
+    });
     await student.save();
     console.log('Student saved:', student.rollNo);
-    res.status(201).json({ message: 'Student registered successfully' });
+    res.status(201).json({ message: 'Student registered successfully', student });
   } catch (err) {
     console.error('Student register error:', err);
     res.status(500).json({ message: 'Registration failed: ' + err.message });
@@ -264,7 +286,7 @@ app.post('/api/students/register', auth, async (req, res) => {
 
 app.post('/api/attendance/mark', auth, async (req, res) => {
   try {
-    const { records } = req.body;
+    const { records, className, confidence } = req.body; // Added className, confidence
     if (!records || !Array.isArray(records)) {
       return res.status(400).json({ message: 'Records array is required' });
     }
@@ -280,14 +302,19 @@ app.post('/api/attendance/mark', auth, async (req, res) => {
 
       const existing = await Attendance.findOne({
         student: student._id,
-        date: { $gte: new Date(today), $lt: new Date(today + 'T23:59:59') }
+        date: { $gte: new Date(today), $lt: new Date(today + 'T23:59:59') },
       });
       if (existing) {
         console.log(`Attendance already marked for ${rec.rollNo}`);
         continue;
       }
 
-      const attendance = new Attendance({ student: student._id, status: rec.status });
+      const attendance = new Attendance({
+        student: student._id,
+        status: rec.status,
+        className: className || 'Unknown', // Store class context
+        confidence: confidence || 'Manual', // Store confidence if provided
+      });
       await attendance.save();
       console.log(`Attendance saved for ${rec.rollNo}: ${rec.status}`);
     }
@@ -302,7 +329,7 @@ app.get('/api/attendance/report', auth, async (req, res) => {
   try {
     const attendances = await Attendance.find().populate('student').sort({ date: -1 });
     console.log('Fetched attendances:', attendances.length);
-    res.json(attendances); // Fixed typo: attances -> attendances
+    res.json(attendances);
   } catch (err) {
     console.error('Attendance fetch error:', err);
     res.status(500).json({ message: 'Failed to fetch attendance: ' + err.message });
