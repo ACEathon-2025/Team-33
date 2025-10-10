@@ -12,6 +12,8 @@
   "dependencies": {
     "@emailjs/browser": "^4.4.1",
     "axios": "^1.12.2",
+    "dexie": "^4.2.1",
+    "dexie-syncable": "^4.0.1-beta.13",
     "face-api.js": "^0.22.2",
     "jspdf": "^2.5.2",
     "jspdf-autotable": "^3.8.4",
