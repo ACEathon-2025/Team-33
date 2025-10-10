@@ -1,68 +1,591 @@
+/* ==========================================================================
+   1. Global Styles & Variables
+   ========================================================================== */
+
+/* Import a modern font */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+  --primary-color: #4f46e5;
+  --primary-hover: #4338ca;
+  --secondary-color: #6b7280;
+  --secondary-hover: #4b5563;
+  --success-color: #10b981;
+  --danger-color: #ef4444;
+  --warning-color: #f59e0b;
+  --bg-color: #f3f4f6;
+  --bg-light: #ffffff;
+  --text-color: #1f2937;
+  --text-light: #6b7280;
+  --border-color: #d1d5db;
+  --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --border-radius: 8px;
+}
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+body {
+  font-family: 'Poppins', sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
+/* ==========================================================================
+   2. General UI Components
+   ========================================================================== */
+
+/* --- Cards --- */
+.card {
+  background-color: var(--bg-light);
+  border-radius: var(--border-radius);
+  padding: 1.5rem;
+  box-shadow: var(--shadow);
+  margin-bottom: 1.5rem;
 }
 
-body {
-  margin: 0;
+.card h2, .card h3 {
+  margin-bottom: 1rem;
+  font-weight: 600;
+  color: var(--primary-color);
+}
+
+/* --- Buttons --- */
+.btn {
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.95rem;
+  transition: background-color 0.2s ease-in-out, transform 0.1s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.btn:hover {
+  transform: translateY(-2px);
+}
+
+.btn:active {
+  transform: translateY(0);
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-primary {
+  background-color: var(--primary-color);
+  color: white;
+}
+.btn-primary:hover {
+  background-color: var(--primary-hover);
+}
+
+.btn-secondary {
+  background-color: var(--secondary-color);
+  color: white;
+}
+.btn-secondary:hover {
+  background-color: var(--secondary-hover);
+}
+
+.btn-danger {
+  background-color: var(--danger-color);
+  color: white;
+}
+
+.btn-warning {
+    background-color: var(--warning-color);
+    color: white;
+}
+
+/* --- Forms & Inputs --- */
+.input-field {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  font-size: 1rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.2);
+}
+
+.enrollment-form {
   display: flex;
-  place-items: center;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.form-row {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.form-row .input-field {
+  margin-bottom: 0;
+  flex: 1;
+}
+
+/* --- Tables --- */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1.5rem;
+}
+
+thead {
+  background-color: #f9fafb;
+}
+
+th, td {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+th {
+  font-weight: 600;
+  color: var(--text-light);
+  text-transform: uppercase;
+  font-size: 0.8rem;
+}
+
+tbody tr:hover {
+  background-color: #f9fafb;
+}
+
+/* --- Lists --- */
+.list-container {
+  overflow-y: auto;
+  max-height: 400px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius);
+  padding: 0.5rem;
+}
+
+.list {
+  list-style: none;
+}
+
+.list-item {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.list-item:last-child {
+  border-bottom: none;
+}
+
+.list-item-placeholder {
+  color: var(--text-light);
+  padding: 1rem;
+  text-align: center;
+}
+
+/* ==========================================================================
+   3. Layout Styles
+   ========================================================================== */
+
+/* --- Centered Layout (for Login/Register) --- */
+.centered {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  padding: 2rem;
+  background: linear-gradient(135deg, #e0e7ff, #c7d2fe);
+}
+.centered h2 {
+  margin-bottom: 1.5rem;
+}
+.centered > .input-field, .centered > .btn {
   min-width: 320px;
+  max-width: 100%;
+}
+.centered p {
+  margin-top: 1rem;
+}
+
+/* --- Admin Panel Layout --- */
+.admin-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 2rem;
+  background-color: var(--primary-color);
+  color: white;
+  box-shadow: var(--shadow);
+}
+.navbar h2 {
+    font-size: 1.5rem;
+}
+.nav-buttons button {
+  background: none;
+  border: none;
+  color: white;
+  padding: 1rem 1.5rem;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background-color 0.2s;
+}
+.nav-buttons button:hover {
+  background-color: var(--primary-hover);
+}
+.content {
+  flex-grow: 1;
+  padding: 2rem;
+  overflow-y: auto;
+}
+.admin-card {
+  max-width: 1200px;
+  margin: 0 auto;
+  background: white;
+  padding: 2rem;
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow);
+}
+
+/* --- Teacher Dashboard Layout --- */
+.teacher-dashboard {
+  display: flex;
   min-height: 100vh;
 }
-
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+.sidebar {
+  width: 250px;
+  background-color: #1f2937;
+  color: #d1d5db;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
 }
-
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
+.sidebar .logo {
+  color: white;
+  text-align: center;
+  margin-bottom: 2rem;
+  font-weight: 700;
+}
+.sidebar .nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.sidebar .nav-link {
+  background: none;
+  border: none;
+  color: #d1d5db;
+  text-align: left;
+  padding: 0.75rem 1rem;
+  border-radius: var(--border-radius);
   cursor: pointer;
-  transition: border-color 0.25s;
+  font-size: 1rem;
+  transition: background-color 0.2s, color 0.2s;
 }
-button:hover {
-  border-color: #646cff;
+.sidebar .nav-link:hover {
+  background-color: #374151;
+  color: white;
 }
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+.sidebar .nav-link.active {
+  background-color: var(--primary-color);
+  color: white;
+  font-weight: 600;
+}
+.sidebar .logout {
+    margin-top: auto;
+    border: 1px solid var(--danger-color);
+    color: var(--danger-color);
+}
+.sidebar .logout:hover {
+    background-color: var(--danger-color);
+    color: white;
+}
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.topbar {
+  background: var(--bg-light);
+  padding: 1rem 2rem;
+  border-bottom: 1px solid var(--border-color);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+.topbar h1 {
+    font-size: 1.8rem;
+    font-weight: 600;
+}
+.page-content {
+  padding: 2rem;
+  overflow-y: auto;
+  flex: 1;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
+/* ==========================================================================
+   4. Component-Specific Styles
+   ========================================================================== */
+
+/* --- Student Module --- */
+.main-grid-student {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 2rem;
+  padding: 2rem;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+.camera-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.camera-container {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 16 / 9;
+  background-color: #111;
+  border-radius: var(--border-radius);
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+.camera-container.small {
+  max-width: 320px;
+  aspect-ratio: 4 / 3;
+}
+.camera-container video, .camera-container canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.camera-container video {
+  transform: scaleX(-1); /* Mirror effect */
+}
+.camera-placeholder {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    height: 100%;
+    color: var(--text-light);
+}
+.btn-toggle-attendance {
+  width: 100%;
+  max-width: 250px;
+  background-color: var(--success-color);
+  color: white;
+  font-size: 1.1rem;
+}
+.btn-toggle-attendance.running {
+  background-color: var(--danger-color);
+}
+.attendance-header {
+  font-weight: 600;
+  padding: 0.5rem 1rem;
+  background-color: #f3f4f6;
+  border-radius: var(--border-radius);
+  margin-bottom: 1rem;
+  text-align: center;
+}
+.attendance-list .list-item {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.25rem;
+}
+.attendance-list .details {
+  font-size: 0.85rem;
+  color: var(--text-light);
+}
+.attendance-list .details span {
+  margin-right: 1rem;
+}
+.last-recognized-card {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 2px solid var(--success-color);
+  background: #f0fdf4;
+  border-radius: var(--border-radius);
+  width: 100%;
+  max-width: 640px;
+}
+.last-recognized-card h3 {
+  color: var(--success-color);
+  margin-bottom: 0.5rem;
+}
+.last-recognized-card p {
+  margin: 0.25rem 0;
+}
+
+/* --- Teacher Module --- */
+.attendance-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+.attendance-columns h4 {
+  text-align: center;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--border-color);
+  margin-bottom: 0.5rem;
+}
+.teacher-list {
+  font-size: 0.9rem;
+}
+.teacher-list button {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    cursor: pointer;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.teacher-list.present button {
+  color: var(--danger-color);
+  border-color: var(--danger-color);
+}
+.teacher-list.absent button {
+  color: var(--success-color);
+  border-color: var(--success-color);
+}
+.report-results {
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-color);
+}
+
+/* --- Enrollment Modal --- */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+.modal-content {
+  background: white;
+  padding: 2rem;
+  border-radius: var(--border-radius);
+  box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1);
+  width: 90%;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.modal-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1.5rem;
+  width: 100%;
+  justify-content: center;
+}
+.modal-actions .btn {
+    flex: 1;
+}
+
+/* --- Status Bar --- */
+.status-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  background-color: #333;
+  color: white;
+  padding: 0.5rem 1rem;
+  text-align: center;
+  font-size: 0.9rem;
+  z-index: 100;
+}
+.centered .status-bar {
+    position: static;
+    background: transparent;
+    color: var(--text-color);
+    margin-top: 1rem;
+    padding: 0;
+}
+
+/* ==========================================================================
+   5. Responsiveness
+   ========================================================================== */
+@media (max-width: 1024px) {
+  .main-grid-student {
+    grid-template-columns: 1fr;
   }
-  a:hover {
-    color: #747bff;
+  .teacher-dashboard {
+      flex-direction: column;
   }
-  button {
-    background-color: #f9f9f9;
+  .sidebar {
+      width: 100%;
+      height: auto;
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+  }
+  .sidebar .nav {
+      flex-direction: row;
+      overflow-x: auto;
+  }
+  .sidebar .logo, .sidebar .logout {
+      margin: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .form-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .attendance-columns {
+    grid-template-columns: 1fr;
+  }
+  .navbar {
+      flex-direction: column;
+      padding: 1rem;
+  }
+  .nav-buttons button {
+      padding: 0.5rem 0.75rem;
+  }
+  .page-content, .content {
+      padding: 1rem;
   }
 }
