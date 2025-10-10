@@ -24,3 +24,4 @@ yarn-error.log*
 # Optional: ignore lockfiles (if causing conflicts)
 package-lock.json
 "*.env" 
+"*.env" 
