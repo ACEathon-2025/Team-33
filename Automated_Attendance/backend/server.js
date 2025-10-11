@@ -7,7 +7,6 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const nodemailer = require('nodemailer');
 const twilio = require('twilio');
-const libphonenumber = require('libphonenumber-js');
 
 require("dotenv").config();
 
@@ -198,6 +197,35 @@ const generateSMSTemplate = (student, status, className, date, schoolName = "You
   const statusText = status.toLowerCase();
   const message = `Dear Parent, ${student.fullName} was ${statusText} for ${className || 'class'} on ${date}. Contact ${schoolName}.`;
   return message.length > 160 ? message.substring(0, 157) + '...' : message; // Twilio SMS limit: 160 chars
+};
+
+// Helper function for phone validation and formatting
+const validateAndFormatPhone = (phoneNumber, defaultCountry = 'IN') => { // Default to India (+91)
+  try {
+    // Remove any non-digits except +
+    let cleaned = phoneNumber.replace(/[^\d+]/g, '');
+    
+    // If no +, assume it's national and add default country code
+    if (!cleaned.startsWith('+')) {
+      // For India (10-digit numbers starting with 6-9 or 93, etc.)
+      if (defaultCountry === 'IN' && cleaned.length === 10 && /^([6-9]\d{9}|[0-9]{10})$/.test(cleaned)) {
+        cleaned = '+91' + cleaned;
+      } else {
+        // Fallback: prepend +1 (US) or throw
+        throw new Error('Invalid national number format');
+      }
+    }
+    
+    // Basic check: Valid if starts with + and 10-15 digits total
+    if (cleaned.startsWith('+') && cleaned.length >= 11 && cleaned.length <= 16 && /^\+[\d]{10,15}$/.test(cleaned)) {
+      return cleaned;
+    }
+    
+    throw new Error('Invalid phone number format');
+  } catch (err) {
+    console.error(`Phone validation failed for ${phoneNumber}: ${err.message}`);
+    return null; // Invalid
+  }
 };
 
 // Sync Endpoint for Dexie.Syncable
@@ -530,31 +558,40 @@ app.post('/api/notifications/send-email', auth, async (req, res) => {
   }
 });
 
-// Protected: Send SMS Notifications
+// Updated: Protected: Send SMS Notifications
 app.post('/api/notifications/send-sms', auth, async (req, res) => {
   try {
-    const { students, status, className, date, schoolName } = req.body; // students: array of { fullName, rollNo, parentNumber }
+    const { students, status, className, date, schoolName } = req.body;
     
     if (!students || !Array.isArray(students) || students.length === 0) {
       return res.status(400).json({ message: 'Students array is required' });
     }
 
     const sendPromises = students.map(async (student) => {
-      if (!student.parentNumber) return { success: false, error: 'No parent phone', student: student.fullName };
+      let formattedNumber = student.parentNumber;
+      
+      if (!formattedNumber) {
+        return { success: false, error: 'No parent phone', student: student.fullName };
+      }
 
-      const phoneNumber = student.parentNumber.startsWith('+') ? student.parentNumber : `+${student.parentNumber}`;
+      // Validate and format
+      formattedNumber = validateAndFormatPhone(formattedNumber, 'IN'); // Default to India
+      if (!formattedNumber) {
+        return { success: false, error: 'Invalid phone number (use +91xxxxxxxxxx)', student: student.fullName };
+      }
+
       const message = generateSMSTemplate(student, status, className, date, schoolName);
 
       try {
         await twilioClient.messages.create({
           body: message,
           from: process.env.TWILIO_PHONE_NUMBER,
-          to: phoneNumber,
+          to: formattedNumber,
         });
-        console.log(`SMS sent to ${student.parentNumber} for ${student.fullName}`);
+        console.log(`SMS sent to ${formattedNumber} for ${student.fullName}`);
         return { success: true, student: student.fullName };
       } catch (smsErr) {
-        console.error(`SMS failed for ${student.parentNumber}:`, smsErr);
+        console.error(`SMS failed for ${formattedNumber}:`, smsErr);
         return { success: false, error: smsErr.message, student: student.fullName };
       }
     });

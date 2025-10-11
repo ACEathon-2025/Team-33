@@ -24,12 +24,26 @@ function EnrollmentModal({ setStatus, modelsLoaded, closeModal }) {
     name: "",
     usn: "",
     parentEmail: "",
-    parentPhone: "",
+    parentPhone: "+91",
   });
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    let processedValue = value;
+
+    if (name === "parentPhone") {
+      // Allow only digits after +91, max 12 chars (+91 + 10 digits)
+      processedValue = value.replace(/[^\d+]/g, '');
+      if (processedValue.startsWith('9') && processedValue.length > 2 && !processedValue.startsWith('+919')) {
+        processedValue = '+91' + processedValue;
+      } else if (!processedValue.startsWith('+91') && processedValue.length >= 2) {
+        processedValue = '+91' + processedValue.slice(0, 10);
+      }
+      // Truncate to valid length
+      if (processedValue.length > 12) processedValue = processedValue.slice(0, 12);
+    }
+
+    setFormData((prev) => ({ ...prev, [name]: processedValue }));
   };
 
   const startCamera = async () => {
@@ -134,10 +148,12 @@ function EnrollmentModal({ setStatus, modelsLoaded, closeModal }) {
           <input
             type="tel"
             name="parentPhone"
-            placeholder="Parent's Phone"
+            placeholder="Parent's Phone (e.g., 9380680180 → +919380680180)"
             value={formData.parentPhone}
             onChange={handleInputChange}
             className="input-field"
+            pattern="\+91[6-9]\d{9}"
+            title="Enter 10-digit Indian mobile number (starts with 6-9)"
           />
         </div>
         <div className="camera-container small">
@@ -508,6 +524,15 @@ function TeacherModule({ setStatus, modelsLoaded, setView }) {
       fetchData();
   };
 
+  const validateAndFormatPhone = (phone) => {
+    if (!phone) return null;
+    let cleaned = phone.replace(/[^\d+]/g, '');
+    if (!cleaned.startsWith('+91') && cleaned.length === 10 && /^([6-9]\d{9})$/.test(cleaned)) {
+      cleaned = '+91' + cleaned;
+    }
+    return (cleaned.startsWith('+91') && cleaned.length === 12) ? cleaned : null;
+  };
+
   const sendNotifications = async (summary, type = "absent") => {
     const students = await db.students.toArray();
     const currentClass = localStorage.getItem("currentClass") ? JSON.parse(localStorage.getItem("currentClass")) : null;
@@ -534,10 +559,11 @@ function TeacherModule({ setStatus, modelsLoaded, setView }) {
       .map((studentEntry) => {
         const rollNo = studentEntry.split(" (")[1]?.replace(")", "");
         const student = students.find((s) => s.rollNo === rollNo);
-        return student && student.parentNumber ? {
+        const formattedPhone = validateAndFormatPhone(student?.parentNumber || '');
+        return student && formattedPhone ? {
           fullName: student.fullName,
           rollNo: student.rollNo,
-          parentNumber: student.parentNumber,
+          parentNumber: formattedPhone,
         } : null;
       })
       .filter(Boolean);
