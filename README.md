@@ -127,8 +127,3 @@ This project is licensed under the MIT License. See the LICENSE
  file for details.
 
 
----
-
-If you want, I can also **enhance it further with screenshots, GIFs, and badges for live demo links**, so your GitHub README looks **super professional and attractive**.  
-
-Do you want me to do that next?
